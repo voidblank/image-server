@@ -235,7 +235,7 @@ def test():
 
 
 if __name__ == "__main__":
-    BASE_DIR = r"C:\Users\voidblank\Saved Games\n"
-    parse_archives_in_dir(BASE_DIR, is_exists=False)
+    BASE_DIR = r"C:\Users\voidblank\Saved Games\0325"
+    parse_archives_in_dir(BASE_DIR, is_exists=2)
     import_local_dir_res_to_db()
     # test()
