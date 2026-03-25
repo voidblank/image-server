@@ -169,22 +169,49 @@ def import_local_dir_res_to_db(json_path: str = None):
         dup_in_db = {r["title"] for r in cur.fetchall()}
 
     seen = set()
-    for item in items:
+    total = len(items)
+    for i, item in enumerate(items):
+        if i % 10 == 0:  # 每10个打印一次进度
+            print(f"处理进度: {i}/{total} ({i/total*100:.1f}%)")
+            if i > 0:
+                conn.commit()  # 定期提交事务，避免长时间占用数据库锁
+
         path = item.get("path")
         if not path:
             continue
 
         filename = os.path.basename(path)
+        # 打印文件名和压缩包大小
+        try:
+            file_size = os.path.getsize(path)
+            print(f"处理文件: {filename} ({file_size} bytes)")
+        except OSError:
+            print(f"处理文件: {filename} (无法获取文件大小)")
+        
         raw_title = os.path.splitext(filename)[0]
         parsed = item.get("parsed") or parse_title(raw_title)
 
         img_bytes = extract_first_image_bytes(path)
+        
+        # 检查图片大小限制 (20MB)
+        MAX_SIZE = 20 * 1024 * 1024  # 20MB
+        if img_bytes and len(img_bytes) > MAX_SIZE:
+            print(f"跳过大文件: {filename} ({len(img_bytes)} bytes > {MAX_SIZE} bytes)")
+            img_bytes = None
+        
         # 生成压缩图
-        try:
-            from main import compress_image_bytes
-            img_compressed = compress_image_bytes(img_bytes)
-        except Exception:
-            img_compressed = None
+        img_compressed = None
+        if img_bytes:
+            try:
+                from main import compress_image_bytes
+                img_compressed = compress_image_bytes(img_bytes)
+                # 检查压缩后图片大小
+                if img_compressed and len(img_compressed) > MAX_SIZE:
+                    print(f"跳过压缩后大文件: {filename} (compressed: {len(img_compressed)} bytes > {MAX_SIZE} bytes)")
+                    img_bytes = None
+                    img_compressed = None
+            except Exception:
+                img_compressed = None
 
         is_exists_flag = item.get("is_exists")
 
@@ -220,6 +247,7 @@ def import_local_dir_res_to_db(json_path: str = None):
         item_id = cur.lastrowid
         set_tags(conn, item_id, [])
 
+    print(f"处理完成: {total} 个项目已插入数据库")
     conn.commit()
     conn.close()
 
@@ -236,6 +264,6 @@ def test():
 
 if __name__ == "__main__":
     BASE_DIR = r"C:\Users\voidblank\Saved Games\0325"
-    parse_archives_in_dir(BASE_DIR, is_exists=2)
-    import_local_dir_res_to_db()
+    # parse_archives_in_dir(BASE_DIR, is_exists=2)
+    import_local_dir_res_to_db() 
     # test()
