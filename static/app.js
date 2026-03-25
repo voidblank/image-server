@@ -113,11 +113,13 @@ function toggleTag(t, e) {
 
 function syncTagInputFromSelected() {
     let input = document.getElementById("tags")
+    if (!input) return
     input.value = selectedTags.join(",")
 }
 
 function parseTagInput() {
     let input = document.getElementById("tags")
+    if (!input) return { committed: [], pending: "" }
     let raw = input.value
     let endsWithComma = /,\s*$/.test(raw)
     let parts = raw.split(",").map(x => x.trim()).filter(x => x)
@@ -306,7 +308,12 @@ async function search() {
 
     document.getElementById("wall").innerHTML = ""
 
-    load()
+    await load()
+
+    // 首次查询加载完第一页后立即预取第二页，提升连续滚动体验
+    if (hasMore) {
+        await load()
+    }
 
 }
 
@@ -321,6 +328,7 @@ async function load() {
     let publish = document.getElementById("publish").value
     let author_tag = document.getElementById("author_tag").value
     let author_tag_mode = document.getElementById("author_tag_mode").value
+    let sort_by = document.getElementById("sort_by").value
 
     syncSelectedFromTagInput()
 
@@ -335,7 +343,8 @@ async function load() {
         `&author_tag_mode=${encodeURIComponent(author_tag_mode)}` +
         `&tags=${encodeURIComponent(tagStr)}` +
         `&show_img=${show_img}` +
-        `&exists_only=${exists_only}`
+        `&exists_only=${exists_only}` +
+        `&sort_by=${encodeURIComponent(sort_by)}`
 
     let r = await fetch(url)
 
@@ -350,14 +359,15 @@ async function load() {
         let d = document.createElement("div")
 
         d.className = "card"
+        d.dataset.id = i.id
 
         let html = ""
 
         if (show_img) {
             html = ""
             if (!exists_only) {
-                let existsLabel = i.is_exists ? "在库" : "不在库"
-                let existsClass = i.is_exists ? "exists-badge" : "exists-badge no"
+                let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
+                let existsClass = i.is_exists === 1 ? "exists-badge" : i.is_exists === 2 ? "exists-badge pending" : "exists-badge no"
                 html += `<div class="${existsClass}">${existsLabel}</div>`
             }
             if (i.img) {
@@ -388,7 +398,7 @@ async function load() {
                 `<div class="row-text">` +
                 `<div>${publish} ${authorTag} ${simpleTitle} ${remarks} ${customMarks}</div>` +
                 `</div>` +
-                `<button onclick='openEditModal(${i.id}, "${safeTags}", "${safePublish}", "${safeAuthor}", "${safeAuthorTag}", "${safeSimpleTitle}", "${safeRemarks}", "${safeTitle}", "", "", ${i.is_exists ? 1 : 0})'>编辑</button>` +
+                `<button onclick='openEditModal(${i.id}, "${safeTags}", "${safePublish}", "${safeAuthor}", "${safeAuthorTag}", "${safeSimpleTitle}", "${safeRemarks}", "${safeTitle}", "", "", ${i.is_exists})'>编辑</button>` +
                 `<button onclick='confirmDelete(${i.id})'>删除</button>` +
                 `</div>`
         }
@@ -485,7 +495,8 @@ function toggleExists() {
 
 window.onscroll = function () {
 
-    if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 400) {
+    // 提前 1000px 触发下一页，避免滚到底才加载导致体验卡顿
+    if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 1000) {
 
         load()
 
@@ -495,19 +506,22 @@ window.onscroll = function () {
 
 function initInputs() {
     let tagsInput = document.getElementById("tags")
-    tagsInput.addEventListener("change", () => {
-        syncSelectedFromTagInput()
-        search()
-    })
-    tagsInput.addEventListener("input", () => {
-        updateTagDatalist()
-    })
+    if (tagsInput) {
+        tagsInput.addEventListener("change", () => {
+            syncSelectedFromTagInput()
+            search()
+        })
+        tagsInput.addEventListener("input", () => {
+            updateTagDatalist()
+        })
+    }
 
     let addTagsInput = document.getElementById("add_tags_input")
-    addTagsInput.addEventListener("input", () => {
-        handleTagInput("add")
-        updateTagDatalistSimple("add_tags_input", "tag-options-add")
-    })
+    if (addTagsInput) {
+        addTagsInput.addEventListener("input", () => {
+            handleTagInput("add")
+            updateTagDatalistSimple("add_tags_input", "tag-options-add")
+        })
     addTagsInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
             e.preventDefault()
@@ -517,6 +531,7 @@ function initInputs() {
     addTagsInput.addEventListener("blur", () => {
         finalizeTagInput("add")
     })
+    }
 
     let editTagsInput = document.getElementById("edit_tags_input")
     editTagsInput.addEventListener("input", () => {
@@ -669,7 +684,7 @@ function openEditModal(id, tags, publish, author, authorTag, simpleTitle, remark
     if (simpleTitleInput) simpleTitleInput.value = simpleTitle ? decodeURIComponent(simpleTitle) : ""
     if (remarksInput) remarksInput.value = remarks ? decodeURIComponent(remarks) : ""
     if (titleInput) titleInput.value = title ? decodeURIComponent(title) : ""
-    if (existsSelect) existsSelect.value = String(isExists === 0 || isExists === "0" ? 0 : 1)
+    if (existsSelect) existsSelect.value = String(isExists)
 
     if (thumbWrap && thumbImg && modalBody && sideActions) {
         if (thumb) {
@@ -810,7 +825,7 @@ function updateWallItem(item) {
                         encodeURIComponent(i.title || ""),
                         i.img || "",
                         i.img_mime || "",
-                        i.is_exists ? 1 : 0
+                        i.is_exists
                     )
                 }
             }
@@ -848,7 +863,7 @@ function insertWallItem(item) {
                 encodeURIComponent(i.title || ""),
                 i.img || "",
                 i.img_mime || "",
-                i.is_exists ? 1 : 0
+                i.is_exists
             )
         }
     }
@@ -861,8 +876,8 @@ function renderCardHtml(i) {
     if (show_img) {
         html = ""
         if (!exists_only) {
-            let existsLabel = i.is_exists ? "在库" : "不在库"
-            let existsClass = i.is_exists ? "exists-badge" : "exists-badge no"
+            let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
+            let existsClass = i.is_exists === 1 ? "exists-badge" : i.is_exists === 2 ? "exists-badge pending" : "exists-badge no"
             html += `<div class="${existsClass}">${existsLabel}</div>`
         }
         if (i.img) {
@@ -876,8 +891,8 @@ function renderCardHtml(i) {
         </div>`
         html += `<div>${(i.tags || []).join(",")}</div>`
     } else {
-        let existsClass = i.is_exists ? "exists-inline" : "exists-inline no"
-        html = `<div class="row-title"><span>${i.title}</span>${!exists_only ? `<div class="${existsClass}">${i.is_exists ? "在库" : "不在库"}</div>` : ""}</div>`
+        let existsClass = i.is_exists === 1 ? "exists-inline" : i.is_exists === 2 ? "exists-inline pending" : "exists-inline no"
+        html = `<div class="row-title"><span>${i.title}</span>${!exists_only ? `<div class="${existsClass}">${i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"}</div>` : ""}</div>`
         let publish = i.publish || ""
         let author = i.author || ""
         let authorTag = i.author_tag || ""
@@ -895,7 +910,7 @@ function renderCardHtml(i) {
             `<div class="row-text">` +
             `<div>${publish} ${authorTag} ${simpleTitle} ${remarks} ${customMarks}</div>` +
             `</div>` +
-            `<button onclick='openEditModal(${i.id}, "${safeTags}", "${safePublish}", "${safeAuthor}", "${safeAuthorTag}", "${safeSimpleTitle}", "${safeRemarks}", "${safeTitle}", "", "", ${i.is_exists ? 1 : 0})'>编辑</button>` +
+            `<button onclick='openEditModal(${i.id}, "${safeTags}", "${safePublish}", "${safeAuthor}", "${safeAuthorTag}", "${safeSimpleTitle}", "${safeRemarks}", "${safeTitle}", "", "", ${i.is_exists})'>编辑</button>` +
             `<button onclick='confirmDelete(${i.id})'>删除</button>` +
             `</div>`
     }
@@ -921,7 +936,15 @@ async function deleteItem(itemId) {
         await loadTags()
         await loadPublishes()
         await loadAuthorTags()
-        search()
+
+        // 删除时不回到第一页，保持当前页状态
+        let card = document.querySelector(`.card[data-id="${itemId}"]`)
+        if (card) card.remove()
+
+        // 尝试补一个下一页项，保持体验连贯
+        if (hasMore) {
+            await load()
+        }
     } else {
         alert("delete failed")
     }

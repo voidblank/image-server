@@ -213,7 +213,8 @@ def items(
         tags: str = "",
         show_img: bool = True,
         exists_only: bool = False,
-        page_size: int = 20
+        page_size: int = 20,
+        sort_by: str = "id"
 ):
     conn = get_conn()
     cur = conn.cursor()
@@ -222,88 +223,102 @@ def items(
         page_size = 20
     offset = (page - 1) * page_size
 
-    sql = "SELECT DISTINCT i.* FROM items i"
+    fields = [
+        "i.id", "i.title", "i.publish", "i.author", "i.author_tag",
+        "i.simple_title", "i.remarks", "i.is_exists"
+    ]
+
+    if show_img:
+        fields.append("i.img_compressed")
+
+    fields.append("GROUP_CONCAT(DISTINCT t.name) AS tags")
+
+    sql = f"SELECT {', '.join(fields)} FROM items i"
     count_sql = "SELECT COUNT(DISTINCT i.id) FROM items i"
-    filter_params = []
+
     where = []
+    params = []
+    joins = []
+    tag_list = None
 
     if tags:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
         if tag_list:
-            join_sql = """
-            JOIN item_tags it ON i.id=it.item_id
-            JOIN tags t ON t.id=it.tag_id
-            """
-            sql += join_sql
-            count_sql += join_sql
-
+            joins.extend([
+                "JOIN item_tags itf ON i.id = itf.item_id",
+                "JOIN tags tf ON itf.tag_id = tf.id"
+            ])
             placeholders = ",".join(["?"] * len(tag_list))
+            where.append(f"tf.name IN ({placeholders})")
+            params.extend(tag_list)
 
-            where.append(f"t.name IN ({placeholders})")
-
-            filter_params.extend(tag_list)
+    # For full tags list per item, use LEFT JOIN on item_tags/tags.
+    joins.extend([
+        "LEFT JOIN item_tags it ON i.id = it.item_id",
+        "LEFT JOIN tags t ON it.tag_id = t.id"
+    ])
 
     if q:
         where.append("i.title LIKE ?")
-        filter_params.append(f"%{q}%")
+        params.append(f"%{q}%")
 
     if publish:
-        where.append("i.publish=?")
-        filter_params.append(publish)
+        where.append("i.publish = ?")
+        params.append(publish)
 
     if author_tag:
         if author_tag_mode == "equal":
             where.append("i.author_tag = ?")
-            filter_params.append(author_tag)
+            params.append(author_tag)
         else:
             where.append("i.author_tag LIKE ?")
-            filter_params.append(f"%{author_tag}%")
+            params.append(f"%{author_tag}%")
 
     if exists_only:
         where.append("i.is_exists = 1")
 
-    has_deleted = False
-    try:
-        cur.execute("PRAGMA table_info(items)")
-        has_deleted = any(r["name"] == "is_deleted" for r in cur.fetchall())
-    except sqlite3.Error:
-        has_deleted = False
+    # is_deleted 默认存在，并且永远过滤被软删除项
+    where.append("i.is_deleted = 0")
 
-    if has_deleted:
-        where.append("i.is_deleted = 0")
+    if joins:
+        sql += " " + " ".join(joins)
+        # count_sql只需要与tags筛选相关的内连接
+        if tag_list:
+            count_sql += " " + " ".join(joins[:2])
 
     if where:
         where_sql = " WHERE " + " AND ".join(where)
         sql += where_sql
         count_sql += where_sql
 
-    sql += " ORDER BY i.id DESC LIMIT ? OFFSET ?"
+    valid_sort_fields = ["id", "title", "publish", "author", "author_tag", "simple_title", "remarks"]
+    if sort_by not in valid_sort_fields:
+        sort_by = "id"
 
-    count_params = list(filter_params)
-    params = list(filter_params)
-    params.extend([page_size, offset])
+    sql += f" GROUP BY i.id ORDER BY i.{sort_by} DESC LIMIT ? OFFSET ?"
+
+    count_params = list(params)
+    query_params = list(params)
+    query_params.extend([page_size, offset])
 
     cur.execute(count_sql, count_params)
     total = cur.fetchone()[0]
 
-    cur.execute(sql, params)
-
+    cur.execute(sql, query_params)
     rows = cur.fetchall()
 
     result = []
 
     for r in rows:
+        tags_text = r["tags"] or ""
+        tags_list = [t for t in tags_text.split(",") if t]
 
         img64 = None
         img_mime = None
 
         if show_img and r["img_compressed"]:
-            # compressed = compress_image_bytes(r["img"])
             img64 = base64.b64encode(r["img_compressed"]).decode()
             img_mime = guess_mime(r["img_compressed"])
-
-        tags_list = get_tags(conn, r["id"])
 
         result.append({
             "id": r["id"],
@@ -321,7 +336,6 @@ def items(
         })
 
     conn.close()
-
     return {"items": result, "total": total}
 
 

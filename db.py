@@ -17,20 +17,20 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT,
         img BLOB,
-        img_compressed BLOB,
         publish TEXT,
         author TEXT,
         author_tag TEXT,
         simple_title TEXT,
         remarks TEXT,
-        is_exists BOOLEAN DEFAULT 1,
-        is_deleted BOOLEAN DEFAULT 0
+        is_exists INTEGER DEFAULT 1,
+        is_deleted BOOLEAN DEFAULT 0,
+        img_compressed BLOB,
     )
     """)
     # conn.execute("ALTER TABLE items ADD COLUMN is_deleted BOOLEAN DEFAULT 0")
 
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_title ON items(title)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_items_title ON items(title)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_simple_title ON items(simple_title)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_publish ON items(publish)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_author_tag ON items(author_tag)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_exists ON items(is_exists)")

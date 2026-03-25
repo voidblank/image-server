@@ -1,4 +1,5 @@
 data.db
+data.db-journal
 __pycache__
 *.json
 *.7z

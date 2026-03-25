@@ -98,7 +98,7 @@ def extract_first_image_bytes(archive_path: str):
     return _read_file_from_archive_7z(archive_path, name)
 
 
-def parse_archives_in_dir(input_dir: str, output_path: str = None, is_exists: bool = None):
+def parse_archives_in_dir(input_dir: str, output_path: str = None, is_exists: int = None):
     """
     Recursively scan input_dir for archives, parse archive filenames, and
     write results to local_dir_res.json next to this script by default.
@@ -124,7 +124,7 @@ def parse_archives_in_dir(input_dir: str, output_path: str = None, is_exists: bo
 
             results.append({
                 "path": full_path,
-                "is_exists": bool(is_exists),
+                "is_exists": is_exists,
                 "parsed": parsed
             })
 
@@ -186,10 +186,10 @@ def import_local_dir_res_to_db(json_path: str = None):
         except Exception:
             img_compressed = None
 
-        is_exists_flag = 1 if item.get("is_exists", True) else 0
+        is_exists_flag = item.get("is_exists")
 
         if raw_title in seen:
-            if is_exists_flag:
+            if is_exists_flag > 0:
                 conn.close()
                 raise ValueError(f"duplicate title in batch: {raw_title}")
             continue
@@ -197,7 +197,7 @@ def import_local_dir_res_to_db(json_path: str = None):
         seen.add(raw_title)
 
         if raw_title in dup_in_db:
-            if is_exists_flag:
+            if is_exists_flag > 0:
                 conn.close()
                 raise ValueError(f"duplicate title in db: {raw_title}")
             continue
