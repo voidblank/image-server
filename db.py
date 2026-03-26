@@ -24,7 +24,7 @@ def init_db():
         remarks TEXT,
         is_exists INTEGER DEFAULT 1,
         is_deleted BOOLEAN DEFAULT 0,
-        img_compressed BLOB,
+        img_compressed BLOB
     )
     """)
     # conn.execute("ALTER TABLE items ADD COLUMN is_deleted BOOLEAN DEFAULT 0")

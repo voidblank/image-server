@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import shutil
 import subprocess
@@ -22,6 +22,18 @@ def _is_image(filename: str) -> bool:
     return os.path.splitext(filename.lower())[1] in IMAGE_EXTS
 
 
+def _format_size(num_bytes: int) -> str:
+    value = float(num_bytes)
+    units = ["B", "KB", "MB", "GB", "TB"]
+    unit_idx = 0
+    while value >= 1024 and unit_idx < len(units) - 1:
+        value /= 1024
+        unit_idx += 1
+    if unit_idx == 0:
+        return f"{int(value)} {units[unit_idx]}"
+    return f"{value:.1f} {units[unit_idx]}"
+
+
 SEVEN_ZIP_PATH = r"D:\7-Zip\7z.exe"
 
 
@@ -31,6 +43,19 @@ def _find_7z_exe():
     return shutil.which("7z")
 
 
+def _is_password_error_7z(output_text: str) -> bool:
+    text = (output_text or "").lower()
+    signals = (
+        "wrong password",
+        "enter password",
+        "can not open encrypted archive",
+        "data error in encrypted file",
+        "headers error",
+        "encrypted",
+    )
+    return any(s in text for s in signals)
+
+
 def _list_archive_paths_7z(path: str):
     seven_zip = _find_7z_exe()
     if not seven_zip:
@@ -38,12 +63,20 @@ def _list_archive_paths_7z(path: str):
 
     try:
         proc = subprocess.run(
-            [seven_zip, "l", "-slt", "-ba", path],
+            [seven_zip, "l", "-slt", "-ba", "-p__INVALID_PASSWORD__", path],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=False
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=120,
         )
     except Exception:
+        return []
+
+    output = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
+    output_text = output.decode("utf-8", errors="ignore").lower()
+    if _is_password_error_7z(output_text):
+        print(f"skip encrypted archive (password required): {os.path.basename(path)}")
         return []
 
     if proc.returncode != 0:
@@ -66,14 +99,23 @@ def _read_file_from_archive_7z(path: str, filename: str):
     seven_zip = _find_7z_exe()
     if not seven_zip:
         return None
+
     try:
         proc = subprocess.run(
-            [seven_zip, "e", "-so", path, filename],
+            [seven_zip, "e", "-so", "-p__INVALID_PASSWORD__", path, filename],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=False
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=120,
         )
     except Exception:
+        return None
+
+    output = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
+    output_text = output.decode("utf-8", errors="ignore").lower()
+    if _is_password_error_7z(output_text):
+        print(f"skip encrypted archive (password required): {os.path.basename(path)}")
         return None
 
     if proc.returncode != 0:
@@ -184,7 +226,7 @@ def import_local_dir_res_to_db(json_path: str = None):
         # 打印文件名和压缩包大小
         try:
             file_size = os.path.getsize(path)
-            print(f"处理文件: {filename} ({file_size} bytes)")
+            print(f"处理文件: {filename} ({_format_size(file_size)})")
         except OSError:
             print(f"处理文件: {filename} (无法获取文件大小)")
         
@@ -196,7 +238,7 @@ def import_local_dir_res_to_db(json_path: str = None):
         # 检查图片大小限制 (20MB)
         MAX_SIZE = 20 * 1024 * 1024  # 20MB
         if img_bytes and len(img_bytes) > MAX_SIZE:
-            print(f"跳过大文件: {filename} ({len(img_bytes)} bytes > {MAX_SIZE} bytes)")
+            print(f"跳过大文件: {filename} ({_format_size(len(img_bytes))} > {_format_size(MAX_SIZE)})")
             img_bytes = None
         
         # 生成压缩图
@@ -207,7 +249,10 @@ def import_local_dir_res_to_db(json_path: str = None):
                 img_compressed = compress_image_bytes(img_bytes)
                 # 检查压缩后图片大小
                 if img_compressed and len(img_compressed) > MAX_SIZE:
-                    print(f"跳过压缩后大文件: {filename} (compressed: {len(img_compressed)} bytes > {MAX_SIZE} bytes)")
+                    print(
+                        f"跳过压缩后大文件: {filename} "
+                        f"(compressed: {_format_size(len(img_compressed))} > {_format_size(MAX_SIZE)})"
+                    )
                     img_bytes = None
                     img_compressed = None
             except Exception:
