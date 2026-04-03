@@ -45,8 +45,8 @@ async def add_item(
 
     try:
         cur.execute("""
-        INSERT INTO items(title,publish,author,author_tag,simple_title,remarks,img,img_compressed)
-        VALUES(?,?,?,?,?,?,?,?)
+        INSERT INTO items(title,publish,author,author_tag,simple_title,remarks,img_compressed)
+        VALUES(?,?,?,?,?,?,?)
         """, (
             title,
             parsed["publish"],
@@ -54,14 +54,15 @@ async def add_item(
             parsed.get("author_tag"),
             parsed["title"],
             ",".join(parsed["remarks"]),
-            img_bytes,
             img_compressed
         ))
     except sqlite3.IntegrityError:
         conn.close()
         return {"ok": False, "error": "TITLE_EXISTS"}
-
     item_id = cur.lastrowid
+    if img:     
+        cur.execute("DELETE FROM cover_img WHERE item_id=?", (item_id,))
+        cur.execute("INSERT INTO cover_img(item_id, img) VALUES(?,?)", (item_id, img_bytes))
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
@@ -101,7 +102,9 @@ async def update_item(
     if img:
         img_bytes = await img.read()
         img_compressed = compress_image_bytes(img_bytes)
-        cur.execute("UPDATE items SET img=?, img_compressed=? WHERE id=?", (img_bytes, img_compressed, item_id))
+        cur.execute("UPDATE items SET img_compressed=? WHERE id=?", (img_compressed, item_id))
+        cur.execute("DELETE FROM cover_img WHERE item_id=?", (item_id,))
+        cur.execute("INSERT INTO cover_img(item_id, img) VALUES(?,?)", (item_id, img_bytes))
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     set_tags(conn, item_id, tag_list)
@@ -193,7 +196,7 @@ def guess_mime(raw_bytes: bytes) -> str:
 def item_img(item_id: int):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT img FROM items WHERE id=?", (item_id,))
+    cur.execute("SELECT img FROM cover_img WHERE item_id=?", (item_id,))
     row = cur.fetchone()
     conn.close()
 

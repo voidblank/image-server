@@ -63,6 +63,14 @@ def init_db():
     )
     """)
 
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS cover_img (
+        item_id INTEGER PRIMARY KEY,
+        img BLOB,
+        FOREIGN KEY (item_id) REFERENCES items(id)
+    )
+    """)
+
     conn.commit()
     conn.close()
 
