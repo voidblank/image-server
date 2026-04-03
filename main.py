@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from analyzer import parse_title
 from db import *
+import time
 
 app = FastAPI()
 
@@ -304,8 +305,11 @@ def items(
     cur.execute(count_sql, count_params)
     total = cur.fetchone()[0]
 
+    start_time = time.time()
     cur.execute(sql, query_params)
     rows = cur.fetchall()
+    end_time = time.time()
+    print(f"Query executed in {end_time - start_time:.2f} seconds, total items: {total}")
 
     result = []
 

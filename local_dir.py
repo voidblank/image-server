@@ -51,7 +51,7 @@ def _is_password_error_7z(output_text: str) -> bool:
         "can not open encrypted archive",
         "data error in encrypted file",
         "headers error",
-        "encrypted",
+        # "encrypted",
     )
     return any(s in text for s in signals)
 

@@ -31,10 +31,12 @@ def init_db():
 
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_items_title ON items(title)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_simple_title ON items(simple_title)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_search ON items(is_deleted,simple_title DESC, id, is_exists)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_publish ON items(publish)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_author_tag ON items(author_tag)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_exists ON items(is_exists)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_deleted ON items(is_deleted)")
+
+    # conn.execute("CREATE INDEX IF NOT EXISTS idx_deleted ON items(is_deleted)")
 
     # 自动添加img_compressed字段（向后兼容）
     try:
