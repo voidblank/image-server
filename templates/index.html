@@ -430,7 +430,9 @@
 
     .edit-side-actions {
         display: flex;
+        flex-direction: column;
         justify-content: center;
+        gap: 10px;
         margin-top: 10px;
     }
 
@@ -447,6 +449,89 @@
         max-height: 78vh;
         object-fit: contain;
         display: block;
+    }
+
+    .archive-preview-modal {
+        position: relative;
+        width: min(1200px, 96vw);
+        max-width: 96vw;
+        max-height: 92vh;
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+    }
+
+    .archive-preview-stage {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .archive-preview-frame {
+        min-height: 70vh;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.04);
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        padding: 10px;
+    }
+
+    .archive-preview-frame img {
+        max-width: 100%;
+        max-height: calc(90vh - 170px);
+        object-fit: contain;
+        display: block;
+    }
+
+    .archive-preview-hotzone {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 50%;
+        z-index: 2;
+        cursor: pointer;
+    }
+
+    .archive-preview-hotzone.left {
+        left: 0;
+        cursor: default;
+    }
+
+    .archive-preview-hotzone.right {
+        right: 0;
+        cursor: default;
+    }
+
+    .archive-preview-loading {
+        color: var(--muted);
+        font-size: 14px;
+    }
+
+    .archive-preview-loading.error {
+        color: #c53030;
+    }
+
+    .archive-preview-nav {
+        min-width: 72px;
+        height: 48px;
+    }
+
+    .archive-preview-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+    }
+
+    .archive-preview-page-info {
+        min-width: 90px;
+        text-align: center;
+        font-weight: 600;
     }
 
     .modal-close {
@@ -839,6 +924,7 @@
     <button onclick="search()">查询</button>
     <button id="existsBtn" onclick="toggleExists()">查看全部</button>
     <button id="modeBtn" onclick="toggleMode()">图墙模式</button>
+    <button id="wallTitleModeBtn" onclick="toggleWallTitleMode()">标题:title</button>
 </div>
 
 <datalist id="tag-options"></datalist>
@@ -978,6 +1064,28 @@
         <button class="modal-close" onclick="closeImageModal()">×</button>
         <h3>原始图片</h3>
         <img id="original_img" alt="original">
+    </div>
+</div>
+
+<div id="archivePreviewModal" class="modal" onclick="closeArchivePreviewModal(event)">
+    <div class="modal-content archive-preview-modal" onclick="event.stopPropagation()">
+        <button class="modal-close" onclick="closeArchivePreviewModal()">×</button>
+        <h3 id="archive_preview_title">在线预览</h3>
+        <div class="archive-preview-stage">
+            <button id="archive_preview_prev" class="archive-preview-nav" onclick="changeArchivePreviewPage(-1)">上一页</button>
+            <div class="archive-preview-frame">
+                <div class="archive-preview-hotzone left" onclick="changeArchivePreviewPage(-1)"></div>
+                <div class="archive-preview-hotzone right" onclick="changeArchivePreviewPage(1)"></div>
+                <div id="archive_preview_loading" class="archive-preview-loading">正在准备预览...</div>
+                <img id="archive_preview_img" class="hidden" alt="archive preview">
+            </div>
+            <button id="archive_preview_next" class="archive-preview-nav" onclick="changeArchivePreviewPage(1)">下一页</button>
+        </div>
+        <div class="archive-preview-toolbar">
+            <button onclick="changeArchivePreviewPage(-1)">上一页</button>
+            <div id="archive_preview_page_info" class="archive-preview-page-info">-</div>
+            <button onclick="changeArchivePreviewPage(1)">下一页</button>
+        </div>
     </div>
 </div>
 

@@ -1,8 +1,9 @@
 ﻿let page = 1
 let loading = false
 let hasMore = true
-let show_img = true
+let displayMode = "simple"
 let existsFilter = "all"
+let wallTitleMode = "title"
 
 let selectedTags = []
 let tagElements = new Map()
@@ -16,6 +17,13 @@ let addTagsList = []
 let editTagsList = []
 let darkMode = false
 let addPreviewUrl = null
+let previewItemId = null
+let previewCurrentPage = 1
+let previewTotalPages = 0
+let previewPreloadAhead = 3
+let previewRequestToken = 0
+let previewPageCache = new Map()
+let previewPagePromises = new Map()
 
 function getWallColumns() {
     let wall = document.getElementById("wall")
@@ -26,11 +34,29 @@ function getWallColumns() {
 }
 
 function getPageSize() {
-    if (!show_img) return 20
+    if (!isImageLayoutMode()) return 20
     let cols = getWallColumns()
     let approxCardHeight = 300
     let rows = Math.max(1, Math.ceil(window.innerHeight / approxCardHeight))
     return cols * rows
+}
+
+function isSimpleMode() {
+    return displayMode === "simple"
+}
+
+function isBrowseMode() {
+    return displayMode === "browse"
+}
+
+function isImageLayoutMode() {
+    return displayMode === "wall" || displayMode === "browse"
+}
+
+function getModeButtonText() {
+    if (displayMode === "wall") return "图墙模式"
+    if (displayMode === "browse") return "浏览模式"
+    return "简单模式"
 }
 
 function shouldShowExistsBadge() {
@@ -41,6 +67,36 @@ function getExistsButtonText() {
     if (existsFilter === "exists") return "查看在库"
     if (existsFilter === "pending") return "查看待处理"
     return "查看全部"
+}
+
+function getWallTitleModeButtonText() {
+    return wallTitleMode === "title" ? "标题:title" : "标题:出版+作者+子标题"
+}
+
+function formatWallTitle(i) {
+    if (wallTitleMode === "meta") {
+        let publish = String(i.publish || "").trim()
+        let author = String(i.author || "").trim()
+        let simpleTitle = String(i.simple_title || "").trim()
+        let text = ""
+        if (publish) text += `(${publish})`
+        if (author) text += `[${author}]`
+        if (simpleTitle) text += simpleTitle
+        return text || (i.title || "")
+    }
+    return i.title || ""
+}
+
+function getArchivePreviewPageUrl(itemId, page) {
+    return `/api/preview/page?item_id=${itemId}&page=${page}`
+}
+
+function clearArchivePreviewCache() {
+    previewPagePromises.clear()
+    previewPageCache.forEach((url) => {
+        if (url) URL.revokeObjectURL(url)
+    })
+    previewPageCache.clear()
 }
 
 async function loadTags() {
@@ -353,7 +409,7 @@ async function load() {
         `&author_tag=${encodeURIComponent(author_tag)}` +
         `&author_tag_mode=${encodeURIComponent(author_tag_mode)}` +
         `&tags=${encodeURIComponent(tagStr)}` +
-        `&show_img=${show_img}` +
+        `&show_img=${isImageLayoutMode()}` +
         `&exists_filter=${encodeURIComponent(existsFilter)}` +
         `&sort_by=${encodeURIComponent(sort_by)}`
 
@@ -374,7 +430,7 @@ async function load() {
 
         let html = ""
 
-        if (show_img) {
+        if (isImageLayoutMode()) {
             html = ""
             if (shouldShowExistsBadge()) {
                 let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
@@ -387,7 +443,7 @@ async function load() {
             } else {
                 html += `<div class="img-frame"></div>`
             }
-            html += `<div class="img-title">${i.title}</div>`
+            html += `<div class="img-title">${formatWallTitle(i)}</div>`
             html += `<div>${i.tags.join(",")}</div>`
         } else {
             let existsClass = i.is_exists === 1 ? "exists-inline" : i.is_exists === 2 ? "exists-inline pending" : "exists-inline no"
@@ -419,9 +475,16 @@ async function load() {
 
         wall.appendChild(d)
 
-        if (show_img) {
-            d.style.cursor = "pointer"
+        if (isImageLayoutMode()) {
+            let canBrowse = i.is_exists === 1 || i.is_exists === 2
+            d.style.cursor = (isBrowseMode() || !isSimpleMode()) && (canBrowse || !isBrowseMode()) ? "pointer" : "default"
             d.onclick = () => {
+                if (isBrowseMode()) {
+                    if (canBrowse) {
+                        openArchivePreview(i.id)
+                    }
+                    return
+                }
                 let publish = i.publish || ""
                 let author = i.author || ""
                 let authorTag = i.author_tag || ""
@@ -464,22 +527,21 @@ function updateResultSummary(shown, total) {
 }
 
 function toggleMode() {
-
     let body = document.body
     let btn = document.getElementById("modeBtn")
-
-    if (body.classList.contains("mode-simple")) {
+    if (displayMode === "simple") {
+        displayMode = "wall"
         body.classList.remove("mode-simple")
-        show_img = true
-        btn.innerText = "图墙模式"
+    } else if (displayMode === "wall") {
+        displayMode = "browse"
+        body.classList.remove("mode-simple")
     } else {
+        displayMode = "simple"
         body.classList.add("mode-simple")
-        show_img = false
-        btn.innerText = "简单模式"
     }
+    if (btn) btn.innerText = getModeButtonText()
 
     search()
-
 }
 
 function toggleTheme() {
@@ -509,6 +571,17 @@ function toggleExists() {
         btn.innerText = getExistsButtonText()
     }
     search()
+}
+
+function toggleWallTitleMode() {
+    wallTitleMode = wallTitleMode === "title" ? "meta" : "title"
+    let btn = document.getElementById("wallTitleModeBtn")
+    if (btn) {
+        btn.innerText = getWallTitleModeButtonText()
+    }
+    if (isImageLayoutMode()) {
+        search()
+    }
 }
 
 window.onscroll = function () {
@@ -598,9 +671,11 @@ function initInputs() {
 
 function initMode() {
     document.body.classList.add("mode-simple")
-    show_img = false
+    displayMode = "simple"
     let btn = document.getElementById("modeBtn")
-    if (btn) btn.innerText = "简单模式"
+    if (btn) btn.innerText = getModeButtonText()
+    let titleBtn = document.getElementById("wallTitleModeBtn")
+    if (titleBtn) titleBtn.innerText = getWallTitleModeButtonText()
 }
 
 function updateAddImagePreview() {
@@ -714,6 +789,170 @@ function closeAddModal(e) {
     }
 }
 
+function setArchivePreviewMessage(message, isError = false) {
+    let loading = document.getElementById("archive_preview_loading")
+    let img = document.getElementById("archive_preview_img")
+    if (loading) {
+        loading.innerText = message
+        loading.classList.remove("hidden")
+        loading.classList.toggle("error", isError)
+    }
+    if (img) img.classList.add("hidden")
+}
+
+function updateArchivePreviewControls() {
+    let pageInfo = document.getElementById("archive_preview_page_info")
+    let prevBtn = document.getElementById("archive_preview_prev")
+    let nextBtn = document.getElementById("archive_preview_next")
+    let title = document.getElementById("archive_preview_title")
+
+    if (pageInfo) {
+        pageInfo.innerText = previewTotalPages > 0 ? `${previewCurrentPage} / ${previewTotalPages}` : "-"
+    }
+    if (prevBtn) prevBtn.disabled = previewCurrentPage <= 1
+    if (nextBtn) nextBtn.disabled = previewTotalPages === 0 || previewCurrentPage >= previewTotalPages
+    if (title && previewItemId == null) {
+        title.innerText = "在线预览"
+    }
+}
+
+function preloadArchivePreviewPages() {
+    if (!previewItemId || previewTotalPages <= 0) return
+    let endPage = Math.min(previewTotalPages, previewCurrentPage + previewPreloadAhead)
+    for (let page = previewCurrentPage + 1; page <= endPage; page++) {
+        fetchArchivePreviewPage(page).catch(() => {})
+    }
+}
+
+async function fetchArchivePreviewPage(page) {
+    if (!previewItemId || page < 1 || page > previewTotalPages) {
+        throw new Error("invalid preview page")
+    }
+    if (previewPageCache.has(page)) {
+        return previewPageCache.get(page)
+    }
+    if (previewPagePromises.has(page)) {
+        return previewPagePromises.get(page)
+    }
+
+    let itemId = previewItemId
+    let url = getArchivePreviewPageUrl(itemId, page)
+    let promise = fetch(url)
+        .then((r) => {
+            if (!r.ok) {
+                throw new Error(`page ${page} fetch failed`)
+            }
+            return r.blob()
+        })
+        .then((blob) => {
+            if (previewItemId !== itemId) {
+                throw new Error("preview context changed")
+            }
+            let objectUrl = URL.createObjectURL(blob)
+            previewPageCache.set(page, objectUrl)
+            previewPagePromises.delete(page)
+            return objectUrl
+        })
+        .catch((e) => {
+            previewPagePromises.delete(page)
+            throw e
+        })
+
+    previewPagePromises.set(page, promise)
+    return promise
+}
+
+async function loadArchivePreviewPage(page) {
+    if (!previewItemId || page < 1 || page > previewTotalPages) return
+    let token = ++previewRequestToken
+    previewCurrentPage = page
+    updateArchivePreviewControls()
+    setArchivePreviewMessage(`正在加载第 ${page} 页...`)
+
+    let img = document.getElementById("archive_preview_img")
+    let loading = document.getElementById("archive_preview_loading")
+    if (!img || !loading) return
+
+    await fetchArchivePreviewPage(page).then((src) => {
+        if (token !== previewRequestToken) return
+        img.src = src
+        img.classList.remove("hidden")
+        loading.classList.add("hidden")
+        preloadArchivePreviewPages()
+    }).catch(() => {
+        if (token !== previewRequestToken) return
+        setArchivePreviewMessage(`第 ${page} 页加载失败`, true)
+    })
+}
+
+async function openArchivePreview(itemId) {
+    if (!itemId) return
+    clearArchivePreviewCache()
+    previewItemId = itemId
+    previewCurrentPage = 1
+    previewTotalPages = 0
+    previewPreloadAhead = 3
+    previewRequestToken++
+
+    let modal = document.getElementById("archivePreviewModal")
+    let title = document.getElementById("archive_preview_title")
+    if (title) title.innerText = "在线预览"
+    if (modal) modal.classList.add("open")
+    updateArchivePreviewControls()
+    setArchivePreviewMessage("正在准备预览...")
+
+    try {
+        let r = await fetch(`/api/preview/info?item_id=${itemId}`)
+        let data = await r.json()
+        if (!r.ok || !data || !data.ok) {
+            throw new Error(data && data.detail ? data.detail : "preview failed")
+        }
+
+        previewTotalPages = data.total_pages || 0
+        previewPreloadAhead = data.preload_ahead || 3
+        if (title) title.innerText = data.title ? `在线预览: ${data.title}` : "在线预览"
+        updateArchivePreviewControls()
+
+        if (previewTotalPages <= 0) {
+            setArchivePreviewMessage("压缩包里没有可预览图片", true)
+            return
+        }
+
+        await loadArchivePreviewPage(1)
+    } catch (e) {
+        setArchivePreviewMessage(e && e.message ? e.message : "预览初始化失败", true)
+    }
+}
+
+function changeArchivePreviewPage(delta) {
+    if (!previewItemId) return
+    let targetPage = previewCurrentPage + delta
+    if (targetPage < 1 || targetPage > previewTotalPages) return
+    loadArchivePreviewPage(targetPage)
+}
+
+function closeArchivePreviewModal(e) {
+    let modal = document.getElementById("archivePreviewModal")
+    if (!modal) return
+    if (!e || e.target === modal) {
+        previewRequestToken++
+        previewItemId = null
+        previewCurrentPage = 1
+        previewTotalPages = 0
+        clearArchivePreviewCache()
+        let img = document.getElementById("archive_preview_img")
+        if (img) {
+            img.removeAttribute("src")
+            img.classList.add("hidden")
+        }
+        let title = document.getElementById("archive_preview_title")
+        if (title) title.innerText = "在线预览"
+        setArchivePreviewMessage("正在准备预览...")
+        updateArchivePreviewControls()
+        modal.classList.remove("open")
+    }
+}
+
 function openEditModal(id, tags, publish, author, authorTag, simpleTitle, remarks, title, thumb, thumbMime, isExists) {
     editingItemId = id
     let modal = document.getElementById("editModal")
@@ -745,7 +984,6 @@ function openEditModal(id, tags, publish, author, authorTag, simpleTitle, remark
     if (remarksInput) remarksInput.value = remarks ? decodeURIComponent(remarks) : ""
     if (titleInput) titleInput.value = title ? decodeURIComponent(title) : ""
     if (existsSelect) existsSelect.value = String(isExists)
-
     if (thumbWrap && thumbImg && modalBody && sideActions) {
         if (thumb) {
             let mime = thumbMime || "image/jpeg"
@@ -864,10 +1102,16 @@ function updateWallItem(item) {
             let html = renderCardHtml(item)
             card.innerHTML = html
             // 重新绑定点击事件
-            if (show_img) {
+            if (isImageLayoutMode()) {
                 card.style.cursor = "pointer"
                 card.onclick = () => {
                     let i = item
+                    if (isBrowseMode()) {
+                        if (i.is_exists === 1 || i.is_exists === 2) {
+                            openArchivePreview(i.id)
+                        }
+                        return
+                    }
                     let publish = i.publish || ""
                     let author = i.author || ""
                     let authorTag = i.author_tag || ""
@@ -902,10 +1146,16 @@ function insertWallItem(item) {
     d.className = "card"
     d.dataset.id = item.id
     d.innerHTML = renderCardHtml(item)
-    if (show_img) {
+    if (isImageLayoutMode()) {
         d.style.cursor = "pointer"
         d.onclick = () => {
             let i = item
+            if (isBrowseMode()) {
+                if (i.is_exists === 1 || i.is_exists === 2) {
+                    openArchivePreview(i.id)
+                }
+                return
+            }
             let publish = i.publish || ""
             let author = i.author || ""
             let authorTag = i.author_tag || ""
@@ -933,7 +1183,7 @@ function insertWallItem(item) {
 // 渲染卡片html
 function renderCardHtml(i) {
     let html = ""
-    if (show_img) {
+    if (isImageLayoutMode()) {
         html = ""
         if (shouldShowExistsBadge()) {
             let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
@@ -947,7 +1197,7 @@ function renderCardHtml(i) {
             html += `<div class="img-frame"></div>`
         }
         html += `<div class="img-title">
-            ${i.title}
+            ${formatWallTitle(i)}
         </div>`
         html += `<div>${(i.tags || []).join(",")}</div>`
     } else {
@@ -1030,6 +1280,21 @@ function closeImageModal() {
     let img = document.getElementById("original_img")
     if (img) img.removeAttribute("src")
 }
+
+document.addEventListener("keydown", (e) => {
+    let previewModal = document.getElementById("archivePreviewModal")
+    if (!previewModal || !previewModal.classList.contains("open")) return
+    if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        changeArchivePreviewPage(-1)
+    } else if (e.key === "ArrowRight") {
+        e.preventDefault()
+        changeArchivePreviewPage(1)
+    } else if (e.key === "Escape") {
+        e.preventDefault()
+        closeArchivePreviewModal()
+    }
+})
 
 function openDeleteModal() {
     let modal = document.getElementById("deleteModal")

@@ -1,18 +1,231 @@
 import base64
+from contextlib import asynccontextmanager
+import hashlib
 import io
+import mimetypes
+import os
+import shutil
 import sqlite3
+import subprocess
+import threading
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Response, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from analyzer import parse_title
 from db import *
+from local_dir import IMAGE_EXTS, _find_7z_exe
 import time
 
-app = FastAPI()
+PREVIEW_SOURCE_DIRS = {
+    1: [
+        # r"D:\archives\exists",
+        r"D:\BaiduNetdiskDownload\test01",
+    ],
+    2: [
+        # r"D:\archives\pending",
+        r"D:\BaiduNetdiskDownload\test01",
+    ],
+}
+PREVIEW_ARCHIVE_EXTS = (".zip", ".rar", ".7z")
+PREVIEW_TEMP_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".preview_cache")
+PREVIEW_PRELOAD_AHEAD = 3
+PREVIEW_7Z_TIMEOUT = 600
+PREVIEW_MAX_CACHE_DIRS = 12
+_preview_extract_locks = {}
+_preview_extract_locks_guard = threading.Lock()
+
+
+def _preview_sort_key(path_text: str):
+    parts = []
+    token = ""
+    token_is_digit = None
+    for ch in path_text.lower():
+        is_digit = ch.isdigit()
+        if token and token_is_digit == is_digit:
+            token += ch
+        else:
+            if token:
+                parts.append(int(token) if token_is_digit else token)
+            token = ch
+            token_is_digit = is_digit
+    if token:
+        parts.append(int(token) if token_is_digit else token)
+    return parts
+
+
+def _get_preview_lock(cache_key: str):
+    with _preview_extract_locks_guard:
+        lock = _preview_extract_locks.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _preview_extract_locks[cache_key] = lock
+        return lock
+
+
+def _remove_preview_dir(path: str):
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def _cleanup_preview_cache_on_startup():
+    if not os.path.isdir(PREVIEW_TEMP_ROOT):
+        return
+    for name in os.listdir(PREVIEW_TEMP_ROOT):
+        full_path = os.path.join(PREVIEW_TEMP_ROOT, name)
+        if os.path.isdir(full_path):
+            _remove_preview_dir(full_path)
+
+
+def _cleanup_preview_cache_overflow():
+    if PREVIEW_MAX_CACHE_DIRS < 1:
+        return
+    os.makedirs(PREVIEW_TEMP_ROOT, exist_ok=True)
+    cache_dirs = []
+    for name in os.listdir(PREVIEW_TEMP_ROOT):
+        full_path = os.path.join(PREVIEW_TEMP_ROOT, name)
+        if os.path.isdir(full_path):
+            try:
+                mtime = os.path.getmtime(full_path)
+            except OSError:
+                mtime = 0
+            cache_dirs.append((mtime, full_path))
+    if len(cache_dirs) <= PREVIEW_MAX_CACHE_DIRS:
+        return
+    cache_dirs.sort(key=lambda item: item[0])
+    for _, full_path in cache_dirs[:-PREVIEW_MAX_CACHE_DIRS]:
+        _remove_preview_dir(full_path)
+
+
+def _get_preview_item_row(item_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id, title, is_exists, is_deleted
+    FROM items
+    WHERE id=?
+    """, (item_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row or row["is_deleted"]:
+        raise HTTPException(status_code=404, detail="item not found")
+    return row
+
+
+def _get_preview_source_dirs(is_exists: int):
+    roots = PREVIEW_SOURCE_DIRS.get(is_exists) or []
+    return [os.path.abspath(p) for p in roots if p]
+
+
+def _find_archive_for_item(title: str, is_exists: int):
+    roots = _get_preview_source_dirs(is_exists)
+    if not roots:
+        raise HTTPException(status_code=500, detail=f"preview paths not configured for state {is_exists}")
+
+    for root in roots:
+        for ext in PREVIEW_ARCHIVE_EXTS:
+            candidate = os.path.join(root, f"{title}{ext}")
+            if os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+
+    raise HTTPException(status_code=404, detail=f"archive not found for title: {title}")
+
+
+def _list_extracted_images(extract_dir: str):
+    images = []
+    for root, _, files in os.walk(extract_dir):
+        for name in files:
+            ext = os.path.splitext(name.lower())[1]
+            if ext not in IMAGE_EXTS:
+                continue
+            full_path = os.path.join(root, name)
+            rel_path = os.path.relpath(full_path, extract_dir)
+            images.append(rel_path)
+    images.sort(key=_preview_sort_key)
+    return images
+
+
+def _ensure_archive_extracted(archive_path: str):
+    seven_zip = _find_7z_exe()
+    if not seven_zip:
+        raise HTTPException(status_code=500, detail="7z executable not found")
+
+    archive_stat = os.stat(archive_path)
+    cache_key_src = f"{archive_path}|{archive_stat.st_mtime_ns}|{archive_stat.st_size}"
+    cache_key = hashlib.sha1(cache_key_src.encode("utf-8")).hexdigest()[:16]
+    extract_dir = os.path.join(PREVIEW_TEMP_ROOT, cache_key)
+    ready_flag = os.path.join(extract_dir, ".ready")
+    lock = _get_preview_lock(cache_key)
+
+    with lock:
+        if not os.path.isfile(ready_flag):
+            os.makedirs(extract_dir, exist_ok=True)
+            proc = subprocess.run(
+                [seven_zip, "x", archive_path, f"-o{extract_dir}", "-y", "-p__INVALID_PASSWORD__"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=PREVIEW_7Z_TIMEOUT,
+            )
+            if proc.returncode != 0:
+                output = ((proc.stdout or b"") + b"\n" + (proc.stderr or b"")).decode("utf-8", errors="ignore")
+                _remove_preview_dir(extract_dir)
+                raise HTTPException(status_code=500, detail=f"archive extract failed: {output[:300]}")
+
+            images = _list_extracted_images(extract_dir)
+            if not images:
+                _remove_preview_dir(extract_dir)
+                raise HTTPException(status_code=404, detail="no previewable images found in archive")
+
+            Path(ready_flag).write_text("\n".join(images), encoding="utf-8")
+            _cleanup_preview_cache_overflow()
+
+    try:
+        images = Path(ready_flag).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        images = _list_extracted_images(extract_dir)
+
+    if not images:
+        raise HTTPException(status_code=404, detail="no previewable images found in archive")
+
+    return extract_dir, images
+
+
+def _get_preview_pages(item_id: int):
+    row = _get_preview_item_row(item_id)
+    is_exists = row["is_exists"]
+    if is_exists not in (1, 2):
+        raise HTTPException(status_code=400, detail="preview only available for existing or pending items")
+
+    archive_path = _find_archive_for_item(row["title"], is_exists)
+    extract_dir, pages = _ensure_archive_extracted(archive_path)
+    return {
+        "title": row["title"],
+        "state": is_exists,
+        "archive_path": archive_path,
+        "extract_dir": extract_dir,
+        "pages": pages,
+    }
+
+
+def on_startup():
+    _cleanup_preview_cache_on_startup()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    on_startup()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 init_db()
 
@@ -205,6 +418,36 @@ def item_img(item_id: int):
 
     raw_bytes = row["img"]
     return Response(content=raw_bytes, media_type=guess_mime(raw_bytes))
+
+
+@app.get("/api/preview/info")
+def preview_info(item_id: int):
+    preview = _get_preview_pages(item_id)
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "title": preview["title"],
+        "archive_path": preview["archive_path"],
+        "total_pages": len(preview["pages"]),
+        "preload_ahead": PREVIEW_PRELOAD_AHEAD,
+    }
+
+
+@app.get("/api/preview/page")
+def preview_page(item_id: int, page: int):
+    preview = _get_preview_pages(item_id)
+    pages = preview["pages"]
+    if page < 1 or page > len(pages):
+        raise HTTPException(status_code=404, detail="page not found")
+
+    rel_path = pages[page - 1]
+    full_path = os.path.abspath(os.path.join(preview["extract_dir"], rel_path))
+    extract_dir = os.path.abspath(preview["extract_dir"])
+    if not full_path.startswith(extract_dir + os.sep) and full_path != extract_dir:
+        raise HTTPException(status_code=400, detail="invalid preview page path")
+
+    media_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+    return FileResponse(full_path, media_type=media_type, filename=os.path.basename(full_path))
 
 
 @app.get("/api/items")
