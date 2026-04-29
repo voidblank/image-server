@@ -2,7 +2,7 @@
 let loading = false
 let hasMore = true
 let show_img = true
-let exists_only = false
+let existsFilter = "all"
 
 let selectedTags = []
 let tagElements = new Map()
@@ -15,6 +15,7 @@ let pendingDeleteId = null
 let addTagsList = []
 let editTagsList = []
 let darkMode = false
+let addPreviewUrl = null
 
 function getWallColumns() {
     let wall = document.getElementById("wall")
@@ -30,6 +31,16 @@ function getPageSize() {
     let approxCardHeight = 300
     let rows = Math.max(1, Math.ceil(window.innerHeight / approxCardHeight))
     return cols * rows
+}
+
+function shouldShowExistsBadge() {
+    return existsFilter === "all"
+}
+
+function getExistsButtonText() {
+    if (existsFilter === "exists") return "查看在库"
+    if (existsFilter === "pending") return "查看待处理"
+    return "查看全部"
 }
 
 async function loadTags() {
@@ -343,7 +354,7 @@ async function load() {
         `&author_tag_mode=${encodeURIComponent(author_tag_mode)}` +
         `&tags=${encodeURIComponent(tagStr)}` +
         `&show_img=${show_img}` +
-        `&exists_only=${exists_only}` +
+        `&exists_filter=${encodeURIComponent(existsFilter)}` +
         `&sort_by=${encodeURIComponent(sort_by)}`
 
     let r = await fetch(url)
@@ -365,7 +376,7 @@ async function load() {
 
         if (show_img) {
             html = ""
-            if (!exists_only) {
+            if (shouldShowExistsBadge()) {
                 let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
                 let existsClass = i.is_exists === 1 ? "exists-badge" : i.is_exists === 2 ? "exists-badge pending" : "exists-badge no"
                 html += `<div class="${existsClass}">${existsLabel}</div>`
@@ -379,8 +390,9 @@ async function load() {
             html += `<div class="img-title">${i.title}</div>`
             html += `<div>${i.tags.join(",")}</div>`
         } else {
-            let existsClass = i.is_exists ? "exists-inline" : "exists-inline no"
-            html = `<div class="row-title"><span>${i.title}</span>${!exists_only ? `<div class="${existsClass}">${i.is_exists ? "在库" : "不在库"}</div>` : ""}</div>`
+            let existsClass = i.is_exists === 1 ? "exists-inline" : i.is_exists === 2 ? "exists-inline pending" : "exists-inline no"
+            let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
+            html = `<div class="row-title"><span>${i.title}</span>${shouldShowExistsBadge() ? `<div class="${existsClass}">${existsLabel}</div>` : ""}</div>`
             let publish = i.publish || ""
             let author = i.author || ""
             let authorTag = i.author_tag || ""
@@ -427,7 +439,7 @@ async function load() {
                     encodeURIComponent(i.title || ""),
                     i.img || "",
                     i.img_mime || "",
-                    i.is_exists ? 1 : 0
+                    i.is_exists
                 )
             }
         }
@@ -485,10 +497,16 @@ function toggleTheme() {
 }
 
 function toggleExists() {
-    exists_only = !exists_only
+    if (existsFilter === "all") {
+        existsFilter = "exists"
+    } else if (existsFilter === "exists") {
+        existsFilter = "pending"
+    } else {
+        existsFilter = "all"
+    }
     let btn = document.getElementById("existsBtn")
     if (btn) {
-        btn.innerText = exists_only ? "全部" : "只看在库"
+        btn.innerText = getExistsButtonText()
     }
     search()
 }
@@ -571,6 +589,11 @@ function initInputs() {
             updateAuthorTagDatalistFor("edit_author_tag", "author-tag-options")
         })
     }
+
+    let addImgInput = document.getElementById("add_img")
+    if (addImgInput) {
+        addImgInput.addEventListener("change", updateAddImagePreview)
+    }
 }
 
 function initMode() {
@@ -578,6 +601,34 @@ function initMode() {
     show_img = false
     let btn = document.getElementById("modeBtn")
     if (btn) btn.innerText = "简单模式"
+}
+
+function updateAddImagePreview() {
+    let imgInput = document.getElementById("add_img")
+    let previewWrap = document.getElementById("add_thumb_wrap")
+    let previewImg = document.getElementById("add_thumb")
+    let modalBody = document.getElementById("add_modal_body")
+    if (!imgInput || !previewWrap || !previewImg || !modalBody) return
+
+    if (addPreviewUrl) {
+        URL.revokeObjectURL(addPreviewUrl)
+        addPreviewUrl = null
+    }
+
+    if (imgInput.files && imgInput.files.length > 0) {
+        addPreviewUrl = URL.createObjectURL(imgInput.files[0])
+        previewImg.src = addPreviewUrl
+        previewWrap.classList.remove("hidden")
+        previewWrap.classList.remove("disabled")
+        previewWrap.onclick = () => openImageModal(null, addPreviewUrl)
+        modalBody.classList.remove("single")
+    } else {
+        previewImg.removeAttribute("src")
+        previewWrap.classList.add("hidden")
+        previewWrap.classList.add("disabled")
+        previewWrap.onclick = null
+        modalBody.classList.add("single")
+    }
 }
 
 function clearInput(id) {
@@ -604,6 +655,9 @@ function clearInput(id) {
 
     if (input.type === "file") {
         input.value = ""
+        if (id === "add_img") {
+            updateAddImagePreview()
+        }
         return
     }
 
@@ -642,6 +696,9 @@ function openAddModal() {
     renderTagChips("add_tags_list", addTagsList, "add")
     let addTagsInput = document.getElementById("add_tags_input")
     if (addTagsInput) addTagsInput.value = ""
+    let imgInput = document.getElementById("add_img")
+    if (imgInput) imgInput.value = ""
+    updateAddImagePreview()
     clearAddParseResult()
     let titleInput = document.getElementById("add_title")
     titleInput.focus()
@@ -650,6 +707,9 @@ function openAddModal() {
 function closeAddModal(e) {
     let modal = document.getElementById("addModal")
     if (!e || e.target === modal) {
+        let imgInput = document.getElementById("add_img")
+        if (imgInput) imgInput.value = ""
+        updateAddImagePreview()
         modal.classList.remove("open")
     }
 }
@@ -875,7 +935,7 @@ function renderCardHtml(i) {
     let html = ""
     if (show_img) {
         html = ""
-        if (!exists_only) {
+        if (shouldShowExistsBadge()) {
             let existsLabel = i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"
             let existsClass = i.is_exists === 1 ? "exists-badge" : i.is_exists === 2 ? "exists-badge pending" : "exists-badge no"
             html += `<div class="${existsClass}">${existsLabel}</div>`
@@ -892,7 +952,7 @@ function renderCardHtml(i) {
         html += `<div>${(i.tags || []).join(",")}</div>`
     } else {
         let existsClass = i.is_exists === 1 ? "exists-inline" : i.is_exists === 2 ? "exists-inline pending" : "exists-inline no"
-        html = `<div class="row-title"><span>${i.title}</span>${!exists_only ? `<div class="${existsClass}">${i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"}</div>` : ""}</div>`
+        html = `<div class="row-title"><span>${i.title}</span>${shouldShowExistsBadge() ? `<div class="${existsClass}">${i.is_exists === 1 ? "在库" : i.is_exists === 2 ? "待处理" : "不在库"}</div>` : ""}</div>`
         let publish = i.publish || ""
         let author = i.author || ""
         let authorTag = i.author_tag || ""
@@ -950,11 +1010,17 @@ async function deleteItem(itemId) {
     }
 }
 
-function openImageModal(itemId) {
+function openImageModal(itemId, imgSrc = "") {
     let modal = document.getElementById("imageModal")
     let img = document.getElementById("original_img")
-    if (!modal || !img || !itemId) return
-    img.src = `/api/item_img?item_id=${itemId}`
+    if (!modal || !img) return
+    if (imgSrc) {
+        img.src = imgSrc
+    } else if (itemId) {
+        img.src = `/api/item_img?item_id=${itemId}`
+    } else {
+        return
+    }
     modal.classList.add("open")
 }
 

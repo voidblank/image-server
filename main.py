@@ -216,7 +216,7 @@ def items(
         author_tag_mode: str = "like",
         tags: str = "",
         show_img: bool = True,
-        exists_only: bool = False,
+        exists_filter: str = "all",
         page_size: int = 20,
         sort_by: str = "id"
 ):
@@ -278,8 +278,10 @@ def items(
             where.append("i.author_tag LIKE ?")
             params.append(f"%{author_tag}%")
 
-    if exists_only:
+    if exists_filter == "exists":
         where.append("i.is_exists = 1")
+    elif exists_filter == "pending":
+        where.append("i.is_exists = 2")
 
     # is_deleted 默认存在，并且永远过滤被软删除项
     where.append("i.is_deleted = 0")

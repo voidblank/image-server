@@ -1,4 +1,4 @@
-﻿﻿<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html>
 <head>
 
@@ -366,6 +366,21 @@
 
     .modal-edit {
         max-width: 860px;
+    }
+
+    .modal-add {
+        max-width: 860px;
+    }
+
+    .add-modal-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 18px;
+        align-items: start;
+    }
+
+    .add-modal-body.single {
+        grid-template-columns: 1fr;
     }
 
     .edit-modal-body {
@@ -822,7 +837,7 @@
         </select>
     </div>
     <button onclick="search()">查询</button>
-    <button id="existsBtn" onclick="toggleExists()">只看在库</button>
+    <button id="existsBtn" onclick="toggleExists()">查看全部</button>
     <button id="modeBtn" onclick="toggleMode()">图墙模式</button>
 </div>
 
@@ -841,32 +856,42 @@
 <div id="resultSummary" class="result-summary">当前展示 0 条，总计 0 条</div>
 
 <div id="addModal" class="modal">
-    <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-content modal-add" onclick="event.stopPropagation()">
         <h3>新增</h3>
-        <div class="controls modal-controls">
-            <div class="input-wrap">
-                <input id="add_title" placeholder="title (required)">
-                <button class="clear-btn" onclick="clearInput('add_title')" aria-label="clear">×</button>
-            </div>
-            <div class="parse-row">
-                <button id="add_parse_btn" class="secondary-btn" onclick="parseAddTitle()">解析</button>
-                <div id="add_parse_result" class="parse-result hidden"></div>
-            </div>
-            <div class="input-wrap">
-                <div id="add_tags_editor" class="tag-editor">
-                    <div id="add_tags_list"></div>
-                    <input id="add_tags_input" class="tag-input" placeholder="custom tags" list="tag-options-add">
+        <div id="add_modal_body" class="add-modal-body single">
+            <div>
+                <div class="controls modal-controls">
+                    <div class="input-wrap">
+                        <input id="add_title" placeholder="title (required)">
+                        <button class="clear-btn" onclick="clearInput('add_title')" aria-label="clear">×</button>
+                    </div>
+                    <div class="parse-row">
+                        <button id="add_parse_btn" class="secondary-btn" onclick="parseAddTitle()">解析</button>
+                        <div id="add_parse_result" class="parse-result hidden"></div>
+                    </div>
+                    <div class="input-wrap">
+                        <div id="add_tags_editor" class="tag-editor">
+                            <div id="add_tags_list"></div>
+                            <input id="add_tags_input" class="tag-input" placeholder="custom tags" list="tag-options-add">
+                        </div>
+                        <button class="clear-btn" onclick="clearInput('add_tags')" aria-label="clear">×</button>
+                    </div>
+                    <div class="input-wrap file-wrap">
+                        <input id="add_img" type="file" accept="image/*">
+                        <button class="clear-btn" onclick="clearInput('add_img')" aria-label="clear">×</button>
+                    </div>
                 </div>
-                <button class="clear-btn" onclick="clearInput('add_tags')" aria-label="clear">×</button>
+                <div class="modal-actions">
+                    <button onclick="closeAddModal()">取消</button>
+                    <button class="primary-btn" onclick="addItem()">提交</button>
+                </div>
             </div>
-            <div class="input-wrap file-wrap">
-                <input id="add_img" type="file" accept="image/*">
-                <button class="clear-btn" onclick="clearInput('add_img')" aria-label="clear">×</button>
+            <div>
+                <div id="add_thumb_wrap" class="edit-thumb hidden disabled">
+                    <img id="add_thumb" alt="thumb preview">
+                    <div class="thumb-label">本地图片预览</div>
+                </div>
             </div>
-        </div>
-        <div class="modal-actions">
-            <button onclick="closeAddModal()">取消</button>
-            <button class="primary-btn" onclick="addItem()">提交</button>
         </div>
     </div>
 </div>
