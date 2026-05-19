@@ -275,8 +275,8 @@ def import_local_dir_res_to_db(json_path: str = None):
             continue
 
         cur.execute("""
-        INSERT INTO items(title,publish,author,author_tag,simple_title,remarks,img,img_compressed,is_exists)
-        VALUES(?,?,?,?,?,?,?,?,?)
+        INSERT INTO items(title,publish,author,author_tag,simple_title,remarks,img_compressed,is_exists)
+        VALUES(?,?,?,?,?,?,?,?)
         """, (
             raw_title,
             parsed.get("publish"),
@@ -284,12 +284,13 @@ def import_local_dir_res_to_db(json_path: str = None):
             parsed.get("author_tag"),
             parsed.get("title"),
             ",".join(parsed.get("remarks") or []),
-            img_bytes,
             img_compressed,
             is_exists_flag
         ))
 
         item_id = cur.lastrowid
+
+        cur.execute("INSERT INTO cover_img(item_id, img) VALUES(?,?)", (item_id, img_bytes))
         set_tags(conn, item_id, [])
 
     print(f"处理完成: {total} 个项目已插入数据库")

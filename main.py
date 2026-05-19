@@ -430,7 +430,24 @@ def preview_info(item_id: int):
         "archive_path": preview["archive_path"],
         "total_pages": len(preview["pages"]),
         "preload_ahead": PREVIEW_PRELOAD_AHEAD,
+        "state": preview.get("state"),
     }
+
+
+@app.post("/api/set_exists")
+def set_exists(item_id: int = Form(...), is_exists: int = Form(...)):
+    try:
+        is_exists_val = int(is_exists)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid is_exists")
+    if is_exists_val not in (0, 1, 2):
+        raise HTTPException(status_code=400, detail="invalid is_exists")
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE items SET is_exists=? WHERE id=?", (is_exists_val, item_id))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "is_exists": is_exists_val}
 
 
 @app.get("/api/preview/page")

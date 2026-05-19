@@ -887,6 +887,15 @@ async function loadArchivePreviewPage(page) {
 
 async function openArchivePreview(itemId) {
     if (!itemId) return
+    // If in browse mode and on mobile, open a dedicated preview page instead of modal
+    function isMobile() {
+        return window.innerWidth <= 760 || /Mobi|Android|iPhone|iPad|Phone/i.test(navigator.userAgent)
+    }
+    if (isBrowseMode() && isMobile()) {
+        // open preview in a new tab/page for better mobile UX
+        window.open(`/static/preview.html?item_id=${itemId}`, '_blank')
+        return
+    }
     clearArchivePreviewCache()
     previewItemId = itemId
     previewCurrentPage = 1

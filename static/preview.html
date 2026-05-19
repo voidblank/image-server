@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>在线预览</title>
+  <style>
+    html,body{height:100%;margin:0;background:#111;color:#fff;display:flex;flex-direction:column}
+    .top{padding:8px;display:flex;align-items:center;gap:8px}
+    .title{flex:1;font-size:16px}
+    .controls button{margin-left:8px;padding:8px 12px}
+    .viewer{flex:1;display:flex;align-items:center;justify-content:center}
+    .viewer img{max-width:100%;max-height:100%;object-fit:contain}
+    .nav{position:fixed;left:8px;top:50%;transform:translateY(-50%)}
+    .nav-right{position:fixed;right:8px;top:50%;transform:translateY(-50%)}
+    .hint{font-size:13px;color:#bbb}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="title">在线预览</div>
+    <div class="controls">
+      <select id="stateSelect" title="更改状态">
+        <option value="0">不在库</option>
+        <option value="1">在库</option>
+        <option value="2">待处理</option>
+      </select>
+      <button id="btnClose">关闭</button>
+    </div>
+  </div>
+  <div class="viewer">
+    <div class="hint" id="hint">正在加载...</div>
+    <img id="previewImg" class="hidden" src="" alt="preview">
+  </div>
+  <div id="sliderWrap" style="position:fixed;left:0;right:0;bottom:8px;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+    <div id="slider" style="background:rgba(0,0,0,0.6);padding:8px;border-radius:8px;display:flex;align-items:center;gap:8px;pointer-events:auto;">
+      <input id="pageRange" type="range" min="1" max="1" value="1" style="width:260px">
+      <div id="pageLabel" style="min-width:80px;text-align:center;color:#fff;font-size:14px">第 1 页 / 1</div>
+    </div>
+  </div>
+  <!-- 点击图片左/右区域翻页（移除独立左右按钮） -->
+<script>
+(function(){
+  const params = new URLSearchParams(location.search)
+  const itemId = params.get('item_id')
+  if (!itemId) {
+    document.getElementById('hint').innerText = '缺少 item_id 参数'
+    return
+  }
+  let total = 0
+  let current = 1
+  const hint = document.getElementById('hint')
+  const img = document.getElementById('previewImg')
+  const btnClose = document.getElementById('btnClose')
+  const stateSelect = document.getElementById('stateSelect')
+
+  function setLoading(msg){ hint.innerText = msg; hint.classList.remove('hidden'); img.classList.add('hidden') }
+  function setImageUrl(url){ img.src = url; img.classList.remove('hidden'); hint.classList.add('hidden') }
+
+  btnClose.onclick = ()=> window.close()
+
+  // 状态下拉处理
+  let changingState = false
+  async function changeState(newState) {
+    if (changingState) return
+    changingState = true
+    stateSelect.disabled = true
+    try {
+      const form = new FormData()
+      form.append('item_id', String(itemId))
+      form.append('is_exists', String(newState))
+      const r = await fetch('/api/set_exists', { method: 'POST', body: form })
+      if (!r.ok) throw new Error('更新失败')
+      const data = await r.json()
+      if (!data || !data.ok) {
+        throw new Error((data && data.detail) || '更新失败')
+      }
+      // 简单提示
+      hint.innerText = '状态已更新'
+      setTimeout(() => { hint.innerText = '' }, 1000)
+    } catch (e) {
+      alert(e && e.message ? e.message : '状态更新失败')
+      // 回滚 select 到服务器端值可能更稳，但这里保持当前选择
+    } finally {
+      changingState = false
+      stateSelect.disabled = false
+    }
+  }
+  if (stateSelect) {
+    stateSelect.addEventListener('change', () => {
+      const v = stateSelect.value
+      changeState(v)
+    })
+  }
+
+  // 点击图片左/右区域翻页：使用 pointer 事件，避免 click+touch 双触发
+  img.style.cursor = 'pointer'
+  let loadingPage = false
+  const sliderWrap = document.getElementById('sliderWrap')
+  const pageRange = document.getElementById('pageRange')
+  const pageLabel = document.getElementById('pageLabel')
+
+  function showSlider() {
+    sliderWrap.style.pointerEvents = 'auto'
+    sliderWrap.style.visibility = 'visible'
+    sliderWrap.style.opacity = '1'
+    pageRange.focus()
+  }
+  function hideSlider() {
+    sliderWrap.style.pointerEvents = 'none'
+    sliderWrap.style.visibility = 'hidden'
+    sliderWrap.style.opacity = '0'
+  }
+
+  function updateSlider() {
+    if (!pageRange) return
+    pageRange.max = Math.max(1, total)
+    pageRange.value = Math.max(1, current)
+    pageLabel.innerText = `第 ${current} 页 / ${total}`
+  }
+
+  // determine if pointer is in bottom area of image
+  function isBottomArea(clientY) {
+    const rect = img.getBoundingClientRect()
+    return (clientY - rect.top) > (rect.height * 0.8)
+  }
+
+  img.addEventListener('pointerup', (e) => {
+    if (e.button && e.button !== 0) return
+    // If click on bottom area, toggle slider
+    if (isBottomArea(e.clientY)) {
+      // toggle visibility
+      if (sliderWrap.style.pointerEvents === 'auto') {
+        hideSlider()
+      } else {
+        updateSlider()
+        showSlider()
+      }
+      return
+    }
+    // normal left/right navigation; hide slider
+    hideSlider()
+    if (loadingPage) return
+    loadingPage = true
+    try {
+      const rect = img.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      if (x < rect.width / 2) change(-1)
+      else change(1)
+    } finally {
+      setTimeout(() => { loadingPage = false }, 300)
+    }
+  })
+
+  function change(delta){
+    const target = current + delta
+    if (target < 1 || target > total) return
+    loadPage(target)
+  }
+
+  async function loadInfo(){
+    setLoading('正在准备预览...')
+    try{
+      const r = await fetch(`/api/preview/info?item_id=${itemId}`)
+      if (!r.ok) throw new Error('初始化失败')
+      const data = await r.json()
+      total = data.total_pages || 0
+      document.querySelector('.title').innerText = data.title ? `在线预览: ${data.title}` : '在线预览'
+      if (typeof data.state !== 'undefined' && stateSelect) {
+        stateSelect.value = String(data.state)
+      }
+      if (total <= 0) {
+        setLoading('压缩包里没有可预览图片')
+        return
+      }
+      hint.style.display = 'none'
+      loadPage(1)
+    }catch(e){
+      setLoading(e && e.message ? e.message : '预览初始化失败')
+    }
+  }
+
+  async function loadPage(page){
+    setLoading(`正在加载第 ${page} 页...`)
+    try{
+      const r = await fetch(`/api/preview/page?item_id=${itemId}&page=${page}`)
+      if (!r.ok) throw new Error('页面加载失败')
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      current = page
+      setImageUrl(url)
+      // update slider when page loaded
+      updateSlider()
+    }catch(e){
+      setLoading(e && e.message ? e.message : '加载失败')
+    }
+  }
+
+  // slider events
+  pageRange.addEventListener('input', (e) => {
+    const v = Number(pageRange.value)
+    pageLabel.innerText = `第 ${v} 页 / ${total}`
+  })
+  pageRange.addEventListener('change', (e) => {
+    const v = Number(pageRange.value)
+    if (v >= 1 && v <= total) {
+      hideSlider()
+      loadPage(v)
+    }
+  })
+
+  loadInfo()
+})()
+</script>
+</body>
+</html>
